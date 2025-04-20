@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub File Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+        .file-item, .folder-item {
+            transition: all 0.2s ease;
+        }
+        .file-item:hover, .folder-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .folder-item.dragging-over {
+            background-color: #f0f9ff;
+            border-color: #3b82f6;
+        }
+        .file-item.dragging {
+            opacity: 0.5;
+            box-shadow: 0 0 0 2px #3b82f6;
+        }
+        .dropzone {
+            border: 2px dashed #3b82f6;
+            background-color: #f0f9ff;
+        }
+        .dropzone.active {
+            background-color: #dbeafe;
+        }
+        .context-menu {
+            display: none;
+            position: absolute;
+            z-index: 1000;
+            background: white;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            min-width: 200px;
+        }
+        .context-menu-item {
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+        }
+        .context-menu-item:hover {
+            background-color: #f3f4f6;
+        }
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 24px;
+            background: #10b981;
+            color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 1000;
+        }
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+        .clipboard-indicator {
+            position: absolute;
+            top: -10px;
+            right: -10px;
+            background: #3b82f6;
+            color: white;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            opacity: 0;
+            transform: scale(0);
+            transition: all 0.2s ease;
+        }
+        .clipboard-active .clipboard-indicator {
+            opacity: 1;
+            transform: scale(1);
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-800 flex items-center">
+                <i class="fab fa-github mr-3 text-gray-700"></i>
+                GitHub File Manager
+            </h1>
+            <p class="text-gray-600 mt-2">Upload and manage files in your GitHub repository</p>
+        </header>
+
+        <!-- Main Content -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Upload Panel -->
+            <div class="lg:col-span-1">
+                <div class="bg-white rounded-xl shadow-md p-6 sticky top-4">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                        <i class="fas fa-cloud-upload-alt mr-2 text-blue-500"></i>
+                        Upload Files
+                    </h2>
+                    
+                    <div id="statusMessage" class="mb-4 p-3 rounded-lg bg-blue-50 text-blue-800 flex items-center">
+                        <i class="fas fa-info-circle mr-2"></i>
+                        <span>Connecting to GitHub...</span>
+                    </div>
+                    
+                    <div id="folderStatus" class="mb-4 p-3 rounded-lg bg-blue-50 text-blue-800 flex items-center">
+                        <i class="fas fa-folder mr-2"></i>
+                        <span>Checking repository...</span>
+                    </div>
+                    
+                    <!-- Dropzone -->
+                    <div id="dropzone" class="dropzone rounded-lg p-8 text-center mb-4 transition-colors cursor-pointer">
+                        <div class="flex flex-col items-center justify-center">
+                            <i class="fas fa-cloud-upload-alt text-4xl text-blue-500 mb-3"></i>
+                            <p class="text-gray-600 mb-1">Drag & drop files here</p>
+                            <p class="text-sm text-gray-500">or</p>
+                            <button id="browseFiles" class="mt-2 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition">
+                                Browse Files
+                            </button>
+                        </div>
+                        <input type="file" id="fileInput" class="hidden">
+                    </div>
+                    
+                    <div id="uploadProgress" class="hidden">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center">
+                                <svg class="w-5 h-5 text-blue-600 animate-spin mr-2" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8h8a8 8 0 01-16 0z"></path>
+                                </svg>
+                                <span class="text-gray-600">Uploading...</span>
+                            </div>
+                            <span id="progressPercent" class="text-gray-600">0%</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2.5 mb-2">
+                            <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+                        </div>
+                        <div class="flex justify-between text-sm text-gray-500">
+                            <span id="uploadedSize">0 MB</span>
+                            <span id="estimatedTime">Estimating time...</span>
+                        </div>
+                    </div>
+                    
+                    <div id="message" class="mt-4 p-3 rounded-lg hidden"></div>
+                    
+                    <div id="fileLink" class="mt-4 p-4 bg-gray-50 rounded-lg hidden">
+                        <div class="flex justify-between items-center mb-2">
+                            <h3 class="font-medium text-gray-700">File uploaded successfully!</h3>
+                            <button id="copyLinkBtn" class="relative clipboard-btn p-2 rounded-full hover:bg-gray-200 transition">
+                                <i class="fas fa-copy text-gray-600"></i>
+                                <span class="clipboard-indicator">
+                                    <i class="fas fa-check"></i>
+                                </span>
+                            </button>
+                        </div>
+                        <a id="uploadedFileLink" href="#" target="_blank" class="text-blue-600 hover:underline break-all"></a>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- File Manager -->
+            <div class="lg:col-span-2">
+                <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                    <!-- Toolbar -->
+                    <div class="p-4 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3">
+                        <div class="flex items-center space-x-2">
+                            <button onclick="loadFileManager()" class="p-2 rounded-lg hover:bg-gray-100">
+                                <i class="fas fa-sync-alt text-gray-600"></i>
+                            </button>
+                            <button onclick="createFolderPrompt()" class="flex items-center bg-green-600 text-white py-2 px-3 rounded-lg hover:bg-green-700 transition">
+                                <i class="fas fa-folder-plus mr-2"></i>
+                                New Folder
+                            </button>
+                            <div class="relative">
+                                <button id="clipboardToggle" class="flex items-center bg-blue-600 text-white py-2 px-3 rounded-lg hover:bg-blue-700 transition">
+                                    <i class="far fa-clipboard mr-2"></i>
+                                    Clipboard
+                                </button>
+                                <div id="clipboardMenu" class="hidden absolute left-0 mt-1 w-48 bg-white rounded-md shadow-lg z-10">
+                                    <div class="py-1">
+                                        <a href="#" onclick="setDragOperation('copy')" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                            <i class="fas fa-copy mr-2 text-blue-500"></i> Copy Mode
+                                        </a>
+                                        <a href="#" onclick="setDragOperation('move')" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                            <i class="fas fa-cut mr-2 text-green-500"></i> Cut Mode
+                                        </a>
+                                        <a href="#" onclick="pasteFromClipboard()" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                            <i class="fas fa-paste mr-2 text-purple-500"></i> Paste
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="flex items-center bg-gray-100 rounded-lg px-3 py-1">
+                            <span id="clipboardStatus" class="text-sm text-gray-600 mr-2">
+                                <i class="far fa-clipboard mr-1"></i> Empty
+                            </span>
+                            <button onclick="clearClipboard()" class="text-gray-500 hover:text-red-500">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Path Navigation -->
+                    <div class="p-4 border-b border-gray-200">
+                        <nav class="flex items-center text-sm text-gray-600 overflow-x-auto">
+                            <span class="whitespace-nowrap">Current path:</span>
+                            <div id="breadcrumbs" class="flex items-center ml-2">
+                                <a href="#" onclick="navigateToRoot()" class="text-blue-600 hover:underline whitespace-nowrap">
+                                    <i class="fas fa-home mr-1"></i>root
+                                </a>
+                            </div>
+                        </nav>
+                    </div>
+                    
+                    <!-- File List -->
+                    <div id="fileManager" class="p-4">
+                        <div id="fileList" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Context Menu -->
+    <div id="contextMenu" class="context-menu">
+        <div class="context-menu-item" onclick="contextMenuAction('open')">
+            <i class="fas fa-external-link-alt mr-2 text-blue-500"></i> Open
+        </div>
+        <div class="context-menu-item" onclick="contextMenuAction('copy')">
+            <i class="fas fa-copy mr-2 text-blue-500"></i> Copy
+        </div>
+        <div class="context-menu-item" onclick="contextMenuAction('cut')">
+            <i class="fas fa-cut mr-2 text-green-500"></i> Cut
+        </div>
+        <div class="context-menu-item" onclick="contextMenuAction('rename')">
+            <i class="fas fa-edit mr-2 text-yellow-500"></i> Rename
+        </div>
+        <div class="context-menu-item" onclick="contextMenuAction('delete')">
+            <i class="fas fa-trash-alt mr-2 text-red-500"></i> Delete
+        </div>
+    </div>
+    
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+    
+    <script>
+        // Configuration
+        const repoOwner = "Yash11yash";
+        const repoName = "FIle-FOr-Test";
+        const token = "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";
+        
+        // File type icons (using Font Awesome)
+        const fileIcons = {
+            audio: "fas fa-music text-purple-500",
+            image: "fas fa-image text-green-500",
+            video: "fas fa-video text-red-500",
+            pdf: "fas fa-file-pdf text-red-500",
+            zip: "fas fa-file-archive text-yellow-500",
+            code: "fas fa-file-code text-blue-500",
+            text: "fas fa-file-alt text-gray-500",
+            default: "fas fa-file text-gray-400"
+        };
+        
+        // File manager state
+        let currentPath = ['root'];
+        let fileSystem = JSON.parse(localStorage.getItem('fileSystem') || '{"root": {"type": "folder", "children": {}}}');
+        let draggedFile = null;
+        let dragOperation = 'move'; // 'move' or 'copy'
+        let clipboard = [];
+        let contextMenuTarget = null;
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            checkTokenValidity();
+            loadFileManager();
+            setupEventListeners();
+            setupContextMenu();
+        });
+        
+        // Set up event listeners
+        function setupEventListeners() {
+            // Dropzone events
+            const dropzone = document.getElementById('dropzone');
+            dropzone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropzone.classList.add('active');
+            });
+            
+            dropzone.addEventListener('dragleave', () => {
+                dropzone.classList.remove('active');
+            });
+            
+            dropzone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropzone.classList.remove('active');
+                if (e.dataTransfer.files.length > 0) {
+                    document.getElementById('fileInput').files = e.dataTransfer.files;
+                    uploadFile();
+                }
+            });
+            
+            // Browse files button
+            document.getElementById('browseFiles').addEventListener('click', () => {
+                document.getElementById('fileInput').click();
+            });
+            
+            // File input change
+            document.getElementById('fileInput').addEventListener('change', () => {
+                if (document.getElementById('fileInput').files.length > 0) {
+                    uploadFile();
+                }
+            });
+            
+            // Copy link button
+            document.getElementById('copyLinkBtn').addEventListener('click', function() {
+                const link = document.getElementById('uploadedFileLink').href;
+                copyToClipboard(link);
+                this.classList.add('clipboard-active');
+                setTimeout(() => {
+                    this.classList.remove('clipboard-active');
+                }, 2000);
+            });
+            
+            // Clipboard toggle
+            document.getElementById('clipboardToggle').addEventListener('click', function(e) {
+                e.stopPropagation();
+                document.getElementById('clipboardMenu').classList.toggle('hidden');
+            });
+            
+            // Close clipboard menu when clicking elsewhere
+            document.addEventListener('click', function() {
+                document.getElementById('clipboardMenu').classList.add('hidden');
+            });
+        }
+        
+        // Set up context menu
+        function setupContextMenu() {
+            document.addEventListener('contextmenu', function(e) {
+                e.preventDefault();
+                const target = e.target.closest('.file-item, .folder-item');
+                if (target) {
+                    contextMenuTarget = target.getAttribute('data-name');
+                    const menu = document.getElementById('contextMenu');
+                    menu.style.display = 'block';
+                    menu.style.left = `${e.pageX}px`;
+                    menu.style.top = `${e.pageY}px`;
+                }
+            });
+            
+            document.addEventListener('click', function() {
+                document.getElementById('contextMenu').style.display = 'none';
+            });
+        }
+        
+        // Context menu actions
+        function contextMenuAction(action) {
+            if (!contextMenuTarget) return;
+            
+            switch(action) {
+                case 'open':
+                    openFile(contextMenuTarget);
+                    break;
+                case 'copy':
+                    addToClipboard(contextMenuTarget, 'copy');
+                    break;
+                case 'cut':
+                    addToClipboard(contextMenuTarget, 'move');
+                    break;
+                case 'rename':
+                    renameFile(contextMenuTarget);
+                    break;
+                case 'delete':
+                    deleteFile(contextMenuTarget);
+                    break;
+            }
+            
+            contextMenuTarget = null;
+        }
+        
+        // Get file icon based on extension
+        function getFileIcon(fileName) {
+            const extension = fileName.split('.').pop().toLowerCase();
+            const audioExtensions = ['mp3', 'wav', 'ogg', 'm4a'];
+            const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'];
+            const videoExtensions = ['mp4', 'avi', 'mov', 'mkv', 'webm'];
+            const pdfExtensions = ['pdf'];
+            const zipExtensions = ['zip', 'rar', '7z', 'tar', 'gz'];
+            const codeExtensions = ['html', 'css', 'js', 'json', 'php', 'py', 'java', 'cpp', 'c', 'h'];
+            const textExtensions = ['txt', 'md', 'csv'];
+            
+            if (audioExtensions.includes(extension)) return fileIcons.audio;
+            if (imageExtensions.includes(extension)) return fileIcons.image;
+            if (videoExtensions.includes(extension)) return fileIcons.video;
+            if (pdfExtensions.includes(extension)) return fileIcons.pdf;
+            if (zipExtensions.includes(extension)) return fileIcons.zip;
+            if (codeExtensions.includes(extension)) return fileIcons.code;
+            if (textExtensions.includes(extension)) return fileIcons.text;
+            return fileIcons.default;
+        }
+        
+        // Load file manager
+        function loadFileManager() {
+            const fileList = document.getElementById('fileList');
+            fileList.innerHTML = '';
+            
+            // Update breadcrumbs
+            updateBreadcrumbs();
+            
+            let currentFolder = fileSystem;
+            for (let p of currentPath) {
+                currentFolder = currentFolder[p].children;
+            }
+            
+            // Add back button if not in root
+            if (currentPath.length > 1) {
+                const backItem = document.createElement('div');
+                backItem.className = 'folder-item p-3 rounded-lg border border-gray-200 bg-gray-50 cursor-pointer flex items-center justify-center flex-col';
+                backItem.innerHTML = `
+                    <div class="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-2">
+                        <i class="fas fa-level-up-alt text-gray-500 text-xl"></i>
+                    </div>
+                    <span class="text-sm text-gray-700 text-center">Go Up</span>
+                `;
+                backItem.onclick = () => {
+                    currentPath.pop();
+                    loadFileManager();
+                };
+                fileList.appendChild(backItem);
+            }
+            
+            // Load folders first
+            Object.keys(currentFolder).forEach(name => {
+                const item = currentFolder[name];
+                if (item.type === 'folder') {
+                    const folderItem = createFolderItem(name);
+                    fileList.appendChild(folderItem);
+                }
+            });
+            
+            // Then load files
+            Object.keys(currentFolder).forEach(name => {
+                const item = currentFolder[name];
+                if (item.type === 'file') {
+                    const fileItem = createFileItem(name, item.url);
+                    fileList.appendChild(fileItem);
+                }
+            });
+        }
+        
+        // Create folder item
+        function createFolderItem(name) {
+            const folderItem = document.createElement('div');
+            folderItem.className = 'folder-item p-3 rounded-lg border border-gray-200 cursor-pointer hover:border-blue-300';
+            folderItem.setAttribute('data-name', name);
+            folderItem.innerHTML = `
+                <div class="flex flex-col items-center">
+                    <div class="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center mb-2">
+                        <i class="fas fa-folder text-blue-400 text-2xl"></i>
+                    </div>
+                    <span class="text-sm text-gray-700 text-center truncate w-full">${name}</span>
+                </div>
+            `;
+            
+            // Single click to open folder
+            folderItem.onclick = () => {
+                currentPath.push(name);
+                loadFileManager();
+            };
+            
+            // Drag and drop events
+            folderItem.draggable = true;
+            folderItem.ondragstart = (e) => {
+                draggedFile = name;
+                folderItem.classList.add('dragging');
+                e.dataTransfer.setData('text/plain', name);
+                e.dataTransfer.effectAllowed = 'copyMove';
+            };
+            
+            folderItem.ondragend = () => {
+                folderItem.classList.remove('dragging');
+                draggedFile = null;
+            };
+            
+            folderItem.ondragover = (e) => {
+                e.preventDefault();
+                folderItem.classList.add('dragging-over');
+                e.dataTransfer.dropEffect = dragOperation === 'copy' ? 'copy' : 'move';
+            };
+            
+            folderItem.ondragleave = () => {
+                folderItem.classList.remove('dragging-over');
+            };
+            
+            folderItem.ondrop = (e) => {
+                e.preventDefault();
+                folderItem.classList.remove('dragging-over');
+                const draggedName = e.dataTransfer.getData('text/plain');
+                if (draggedName) {
+                    moveOrCopyFile(draggedName, name);
+                }
+            };
+            
+            return folderItem;
+        }
+        
+        // Create file item
+        function createFileItem(name, url) {
+            const fileItem = document.createElement('div');
+            fileItem.className = 'file-item p-3 rounded-lg border border-gray-200 hover:border-blue-300 relative';
+            fileItem.setAttribute('data-name', name);
+            fileItem.innerHTML = `
+                <div class="flex flex-col items-center">
+                    <div class="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center mb-2">
+                        <i class="${getFileIcon(name)} text-xl"></i>
+                    </div>
+                    <span class="text-sm text-gray-700 text-center truncate w-full">${name}</span>
+                    <div class="absolute top-1 right-1 flex space-x-1 opacity-0 hover:opacity-100 transition-opacity">
+                        <button class="p-1 text-gray-500 hover:text-blue-500" onclick="event.stopPropagation(); copyToClipboard('${url}')">
+                            <i class="fas fa-copy text-xs"></i>
+                        </button>
+                        <button class="p-1 text-gray-500 hover:text-red-500" onclick="event.stopPropagation(); deleteFile('${name}')">
+                            <i class="fas fa-trash-alt text-xs"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            // Click to open file
+            fileItem.onclick = () => {
+                openFile(name);
+            };
+            
+            // Drag and drop events
+            fileItem.draggable = true;
+            fileItem.ondragstart = (e) => {
+                draggedFile = name;
+                fileItem.classList.add('dragging');
+                e.dataTransfer.setData('text/plain', name);
+                e.dataTransfer.effectAllowed = 'copyMove';
+            };
+            
+            fileItem.ondragend = () => {
+                fileItem.classList.remove('dragging');
+                draggedFile = null;
+            };
+            
+            return fileItem;
+        }
+        
+        // Update breadcrumbs navigation
+        function updateBreadcrumbs() {
+            const breadcrumbs = document.getElementById('breadcrumbs');
+            breadcrumbs.innerHTML = '';
+            
+            currentPath.forEach((folder, index) => {
+                const isLast = index === currentPath.length - 1;
+                
+                const crumb = document.createElement('span');
+                crumb.className = 'flex items-center';
+                
+                if (!isLast) {
+                    const link = document.createElement('a');
+                    link.href = '#';
+                    link.className = 'text-blue-600 hover:underline whitespace-nowrap';
+                    link.textContent = folder;
+                    link.onclick = (e) => {
+                        e.preventDefault();
+                        currentPath = currentPath.slice(0, index + 1);
+                        loadFileManager();
+                    };
+                    
+                    crumb.appendChild(link);
+                    crumb.innerHTML += '<span class="mx-2 text-gray-400">/</span>';
+                } else {
+                    const span = document.createElement('span');
+                    span.className = 'font-medium text-gray-800 whitespace-nowrap';
+                    span.textContent = folder;
+                    crumb.appendChild(span);
+                }
+                
+                breadcrumbs.appendChild(crumb);
+            });
+        }
+        
+        // Navigate to root
+        function navigateToRoot() {
+            currentPath = ['root'];
+            loadFileManager();
+        }
+        
+        // Set drag operation (move or copy)
+        function setDragOperation(operation) {
+            dragOperation = operation;
+            showToast(`Clipboard mode set to <strong>${operation}</strong>`);
+            updateClipboardStatus();
+        }
+        
+        // Move or copy file to a folder
+        function moveOrCopyFile(fileName, targetFolder) {
+            let currentFolder = fileSystem;
+            for (let p of currentPath) {
+                currentFolder = currentFolder[p].children;
+            }
+            
+            if (!currentFolder[fileName]) {
+                // Check if it's in clipboard
+                const clipboardItem = clipboard.find(item => item.name === fileName);
+                if (!clipboardItem) return;
+                
+                fileName = clipboardItem.name;
+                currentFolder = fileSystem;
+                for (let p of clipboardItem.path) {
+                    currentFolder = currentFolder[p].children;
+                }
+            }
+            
+            if (!currentFolder[fileName]) return;
+            
+            const fileData = currentFolder[fileName];
+            let target = fileSystem;
+            for (let p of [...currentPath, targetFolder]) {
+                target = target[p].children;
+            }
+            
+            // Check if file already exists in target
+            if (target[fileName]) {
+                showToast(`File already exists in target folder`, 'error');
+                return;
+            }
+            
+            // Perform the operation
+            target[fileName] = { ...fileData };
+            
+            if (dragOperation === 'move') {
+                delete currentFolder[fileName];
+                // Remove from clipboard if it was there
+                clipboard = clipboard.filter(item => item.name !== fileName);
+                updateClipboardStatus();
+            }
+            
+            localStorage.setItem('fileSystem', JSON.stringify(fileSystem));
+            loadFileManager();
+            showToast(`File ${dragOperation === 'move' ? 'moved' : 'copied'} successfully`);
+        }
+        
+        // Create new folder prompt
+        function createFolderPrompt() {
+            const folderName = prompt('Enter folder name:');
+            if (!folderName) return;
+            
+            createFolder(folderName);
+        }
+        
+        // Create new folder
+        function createFolder(folderName) {
+            if (!folderName.trim()) {
+                showToast('Please enter a folder name', 'error');
+                return;
+            }
+            
+            let currentFolder = fileSystem;
+            for (let p of currentPath) {
+                currentFolder = currentFolder[p].children;
+            }
+            
+            if (currentFolder[folderName]) {
+                showToast('Folder already exists', 'error');
+                return;
+            }
+            
+            currentFolder[folderName] = { type: 'folder', children: {} };
+            localStorage.setItem('fileSystem', JSON.stringify(fileSystem));
+            loadFileManager();
+            showToast(`Folder "${folderName}" created`);
+        }
+        
+        // Open file
+        function openFile(fileName) {
+            let currentFolder = fileSystem;
+            for (let p of currentPath) {
+                currentFolder = currentFolder[p].children;
+            }
+            
+            if (currentFolder[fileName] && currentFolder[fileName].url) {
+                window.open(currentFolder[fileName].url, '_blank');
+            }
+        }
+        
+        // Rename file
+        function renameFile(fileName) {
+            const newName = prompt('Enter new name:', fileName);
+            if (!newName || newName === fileName) return;
+            
+            let currentFolder = fileSystem;
+            for (let p of currentPath) {
+                currentFolder = currentFolder[p].children;
+            }
+            
+            if (currentFolder[newName]) {
+                showToast('A file with that name already exists', 'error');
+                return;
+            }
+            
+            currentFolder[newName] = currentFolder[fileName];
+            delete currentFolder[fileName];
+            localStorage.setItem('fileSystem', JSON.stringify(fileSystem));
+            loadFileManager();
+            showToast(`File renamed to "${newName}"`);
+        }
+        
+        // Save file to file system
+        function saveFile(fileName, fileUrl) {
+            let currentFolder = fileSystem;
+            for (let p of currentPath) {
+                currentFolder = currentFolder[p].children;
+            }
+            
+            currentFolder[fileName] = { type: 'file', url: fileUrl };
+            localStorage.setItem('fileSystem', JSON.stringify(fileSystem));
+            loadFileManager();
+        }
+        
+        // Delete file
+        function deleteFile(fileName) {
+            if (!confirm(`Are you sure you want to delete "${fileName}"?`)) return;
+            
+            let currentFolder = fileSystem;
+            for (let p of currentPath) {
+                currentFolder = currentFolder[p].children;
+            }
+            
+            delete currentFolder[fileName];
+            localStorage.setItem('fileSystem', JSON.stringify(fileSystem));
+            loadFileManager();
+            showToast(`"${fileName}" deleted`);
+        }
+        
+        // Add to clipboard
+        function addToClipboard(fileName, operation) {
+            // Remove if already in clipboard
+            clipboard = clipboard.filter(item => item.name !== fileName);
+            
+            clipboard.push({
+                name: fileName,
+                path: [...currentPath],
+                operation: operation
+            });
+            
+            updateClipboardStatus();
+            showToast(`"${fileName}" added to clipboard (${operation} mode)`);
+        }
+        
+        // Paste from clipboard
+        function pasteFromClipboard() {
+            if (clipboard.length === 0) {
+                showToast('Clipboard is empty', 'error');
+                return;
+            }
+            
+            clipboard.forEach(item => {
+                dragOperation = item.operation;
+                moveOrCopyFile(item.name, currentPath[currentPath.length - 1]);
+            });
+            
+            if (dragOperation === 'move') {
+                clipboard = [];
+                updateClipboardStatus();
+            }
+        }
+        
+        // Clear clipboard
+        function clearClipboard() {
+            clipboard = [];
+            updateClipboardStatus();
+            showToast('Clipboard cleared');
+        }
+        
+        // Update clipboard status display
+        function updateClipboardStatus() {
+            const clipboardStatus = document.getElementById('clipboardStatus');
+            
+            if (clipboard.length === 0) {
+                clipboardStatus.innerHTML = '<i class="far fa-clipboard mr-1"></i> Empty';
+                return;
+            }
+            
+            const operations = clipboard.reduce((acc, item) => {
+                acc[item.operation] = (acc[item.operation] || 0) + 1;
+                return acc;
+            }, {});
+            
+            let statusText = '';
+            if (operations.copy) statusText += `<span class="text-blue-600">${operations.copy} copy</span>`;
+            if (operations.move) {
+                if (operations.copy) statusText += ', ';
+                statusText += `<span class="text-green-600">${operations.move} cut</span>`;
+            }
+            
+            clipboardStatus.innerHTML = `<i class="far fa-clipboard mr-1"></i> ${statusText}`;
+        }
+        
+        // Check GitHub token validity
+        function checkTokenValidity() {
+            fetch('https://api.github.com/user', {
+                headers: {
+                    'Authorization': `token ${token}`,
+                    'Accept': 'application/vnd.github.v3+json'
+                }
+            })
+            .then(res => res.json())
+            .then(data => {
+                const statusMessage = document.getElementById('statusMessage');
+                if (data.login) {
+                    statusMessage.innerHTML = `<i class="fas fa-check-circle mr-2 text-green-500"></i> Connected as: <strong>${data.login}</strong>`;
+                    statusMessage.className = 'p-3 rounded-lg bg-green-50 text-green-800 flex items-center';
+                    checkFolderExistence();
+                } else {
+                    statusMessage.innerHTML = `<i class="fas fa-times-circle mr-2 text-red-500"></i> Invalid GitHub token`;
+                    statusMessage.className = 'p-3 rounded-lg bg-red-50 text-red-800 flex items-center';
+                }
+            })
+            .catch(() => {
+                const statusMessage = document.getElementById('statusMessage');
+                statusMessage.innerHTML = `<i class="fas fa-times-circle mr-2 text-red-500"></i> Error connecting to GitHub`;
+                statusMessage.className = 'p-3 rounded-lg bg-red-50 text-red-800 flex items-center';
+            });
+        }
+        
+        // Check if videos folder exists
+        function checkFolderExistence() {
+            fetch(`https://api.github.com/repos/${repoOwner}/${repoName}/contents/`, {
+                headers: {
+                    'Authorization': `token ${token}`
+                }
+            })
+            .then(res => res.json())
+            .then(data => {
+                const folderStatus = document.getElementById('folderStatus');
+                const folder = Array.isArray(data) ? data.find(item => item.type === "dir" && item.name === "videos") : null;
+                if (folder) {
+                    folderStatus.innerHTML = `<i class="fas fa-check-circle mr-2 text-green-500"></i> Folder 'videos' found in repository`;
+                    folderStatus.className = 'p-3 rounded-lg bg-green-50 text-green-800 flex items-center';
+                } else {
+                    folderStatus.innerHTML = `<i class="fas fa-exclamation-triangle mr-2 text-yellow-500"></i> Folder 'videos' not found (files will upload to root)`;
+                    folderStatus.className = 'p-3 rounded-lg bg-yellow-50 text-yellow-800 flex items-center';
+                }
+            })
+            .catch(() => {
+                const folderStatus = document.getElementById('folderStatus');
+                folderStatus.innerHTML = `<i class="fas fa-exclamation-triangle mr-2 text-yellow-500"></i> Error checking repository`;
+                folderStatus.className = 'p-3 rounded-lg bg-yellow-50 text-yellow-800 flex items-center';
+            });
+        }
+        
+        // Upload file to GitHub
+        function uploadFile() {
+            const file = document.getElementById('fileInput').files[0];
+            const message = document.getElementById('message');
+            const uploadProgress = document.getElementById('uploadProgress');
+            const progressBar = document.getElementById('progressBar');
+            const progressPercent = document.getElementById('progressPercent');
+            const uploadedSize = document.getElementById('uploadedSize');
+            const estimatedTime = document.getElementById('estimatedTime');
+            const fileLink = document.getElementById('fileLink');
+            
+            if (!file) {
+                showToast('Please select a file first', 'error');
+                return;
+            }
+            
+            // Reset UI
+            message.className = 'hidden';
+            fileLink.className = 'hidden';
+            uploadProgress.classList.remove('hidden');
+            progressBar.style.width = '0%';
+            progressPercent.textContent = '0%';
+            uploadedSize.textContent = '0 MB';
+            estimatedTime.textContent = 'Estimating time...';
+            
+            const path = `videos/${file.name}`;
+            const url = `https://api.github.com/repos/${repoOwner}/${repoName}/contents/${path}`;
+            
+            const reader = new FileReader();
+            reader.onloadend = function() {
+                const base64 = reader.result.split(',')[1];
+                const data = {
+                    message: `Upload ${file.name}`,
+                    content: base64
+                };
+                
+                // Simulate upload progress
+                let progress = 0;
+                const fileSizeMB = file.size / (1024 * 1024);
+                const uploadSpeedMBps = 2; // Assume 2 MB/s upload speed
+                const estimatedSeconds = Math.ceil(fileSizeMB / uploadSpeedMBps);
+                estimatedTime.textContent = `~${estimatedSeconds} sec remaining`;
+                
+                const progressInterval = setInterval(() => {
+                    progress += Math.random() * 5;
+                    if (progress > 90) progress = 90;
+                    progressBar.style.width = `${progress}%`;
+                    progressPercent.textContent = `${Math.round(progress)}%`;
+                    uploadedSize.textContent = `${(fileSizeMB * progress / 100).toFixed(1)} MB / ${fileSizeMB.toFixed(1)} MB`;
+                }, 500);
+                
+                // Actual upload
+                fetch(url, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `token ${token}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    },
+                    body: JSON.stringify(data)
+                })
+                .then(res => res.json())
+                .then(result => {
+                    clearInterval(progressInterval);
+                    progressBar.style.width = '100%';
+                    progressPercent.textContent = '100%';
+                    uploadedSize.textContent = `${fileSizeMB.toFixed(1)} MB / ${fileSizeMB.toFixed(1)} MB`;
+                    estimatedTime.textContent = 'Upload complete!';
+                    
+                    setTimeout(() => {
+                        uploadProgress.classList.add('hidden');
+                        if (result.content) {
+                            showToast('Upload successful!', 'success');
+                            const fileUrl = result.content.html_url;
+                            saveFile(file.name, fileUrl);
+                            
+                            // Show file link
+                            document.getElementById('uploadedFileLink').textContent = fileUrl;
+                            document.getElementById('uploadedFileLink').href = fileUrl;
+                            fileLink.classList.remove('hidden');
+                        } else {
+                            showToast('Upload failed', 'error');
+                        }
+                    }, 1000);
+                })
+                .catch(() => {
+                    clearInterval(progressInterval);
+                    uploadProgress.classList.add('hidden');
+                    showToast('Upload failed', 'error');
+                });
+            };
+            reader.readAsDataURL(file);
+        }
+        
+        // Copy text to clipboard
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                showToast('Copied to clipboard!');
+            });
+        }
+        
+        // Show toast notification
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            toast.innerHTML = message;
+            
+            // Set color based on type
+            if (type === 'error') {
+                toast.style.background = '#ef4444';
+            } else if (type === 'success') {
+                toast.style.background = '#10b981';
+            } else {
+                toast.style.background = '#3b82f6';
+            }
+            
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
