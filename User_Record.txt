@@ -287,3 +287,17 @@ User Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 Latitude: 21.0927616
 Longitude: 79.1379968
 ------------------
+------------------
+152.56.15.206 - 7/29/2025, 6:47:45 PM
+
+OS: Windows
+Browser: Chrome
+Platform: Win32
+Language: en
+Screen: 1536x864
+Timezone: Asia/Calcutta
+Cookies Enabled: true
+User Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36
+Latitude: 21.0927616
+Longitude: 79.1379968
+------------------
